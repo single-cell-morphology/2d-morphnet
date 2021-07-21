@@ -64,6 +64,9 @@ def setup_training_loop_kwargs(
     allow_tf32 = None, # Allow PyTorch to use TF32 for matmul and convolutions: <bool>, default = False
     nobench    = None, # Disable cuDNN benchmarking: <bool>, default = False
     workers    = None, # Override number of DataLoader workers: <int>, default = 3
+
+    # User-added option.
+    dataset_name = None, # 'cifar10', 'patchseq-nuclei'
 ):
     args = dnnlib.EasyDict()
 
@@ -355,6 +358,11 @@ def setup_training_loop_kwargs(
         if not workers >= 1:
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
+    
+    # -------------------------------------------------
+    # User options: dataset_name
+    # -------------------------------------------------
+    args.dataset_name = dataset_name
 
     return desc, args
 
@@ -434,6 +442,9 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
+
+# User-added options
+@click.option('--dataset_name', help='Name of Dataset', type=str)
 
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
