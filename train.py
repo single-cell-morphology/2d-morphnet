@@ -101,13 +101,13 @@ def setup_training_loop_kwargs(
     assert isinstance(seed, int)
     args.random_seed = seed
 
-    # -----------------------------------
-    # Dataset: data, cond, subset, mirror
-    # -----------------------------------
+    # -------------------------------------------------
+    # Dataset: data, cond, subset, mirror, dataset_name
+    # -------------------------------------------------
 
     assert data is not None
     assert isinstance(data, str)
-    args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
+    args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', dataset_name=dataset_name, path=data, use_labels=True, max_size=None, xflip=False)
     args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
     try:
         training_set = dnnlib.util.construct_class_by_name(**args.training_set_kwargs) # subclass of training.dataset.Dataset
@@ -358,11 +358,6 @@ def setup_training_loop_kwargs(
         if not workers >= 1:
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
-    
-    # -------------------------------------------------
-    # User options: dataset_name
-    # -------------------------------------------------
-    args.dataset_name = dataset_name
 
     return desc, args
 
