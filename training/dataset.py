@@ -13,6 +13,8 @@ import PIL.Image
 import json
 import torch
 import dnnlib
+import scvi
+import anndata
 
 try:
     import pyspng
@@ -23,6 +25,7 @@ except ImportError:
 class Dataset(torch.utils.data.Dataset):
     def __init__(self,
         name,                   # Name of the dataset.
+        dataset_name,
         raw_shape,              # Shape of the raw image data (NCHW).
         max_size    = None,     # Artificially limit the size of the dataset. None = no limit. Applied before xflip.
         use_labels  = False,    # Enable conditioning labels? False = label dimension is zero.
@@ -34,6 +37,7 @@ class Dataset(torch.utils.data.Dataset):
         self._use_labels = use_labels
         self._raw_labels = None
         self._label_shape = None
+        self._dataset_name = dataset_name
 
         # Apply max_size.
         self._raw_idx = np.arange(self._raw_shape[0], dtype=np.int64)
@@ -127,6 +131,8 @@ class Dataset(torch.utils.data.Dataset):
 
     @property
     def label_shape(self):
+        if self._dataset_name == "patchseq_nuclei" and self._use_labels:
+            return [10]
         if self._label_shape is None:
             raw_labels = self._get_raw_labels()
             if raw_labels.dtype == np.int64:
@@ -152,10 +158,12 @@ class Dataset(torch.utils.data.Dataset):
 
 class ImageFolderDataset(Dataset):
     def __init__(self,
+        dataset_name,           # Name of Dataset, e.g. cifar
         path,                   # Path to directory or zip.
         resolution      = None, # Ensure specific resolution, None = highest available.
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
+        self._dataset_name = dataset_name
         self._path = path
         self._zipfile = None
 
@@ -177,7 +185,29 @@ class ImageFolderDataset(Dataset):
         raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
         if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
             raise IOError('Image files do not match the specified resolution')
-        super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+        super().__init__(name=name, raw_shape=raw_shape, dataset_name=dataset_name, **super_kwargs)
+
+        # Load scVI model if using conditional information
+        if super_kwargs["use_labels"]:
+            if self._dataset_name == "cifar10":
+                pass
+            elif self._dataset_name == "patchseq_nuclei":
+                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq_combined/processed"
+                scvi_path = "scVI/patchseq"
+                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
+                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
+                self.adata_index = self.adata.obs.reset_index()
+                self.cell_indices = self.get_cell_indices()
+    
+    def get_cell_indices(self):
+        cell_indices = []
+        for i in self._raw_idx:
+            image_name = self._image_fnames[i].split(".")[0]
+            cell_id = "_".join(image_name.split("_")[:-1])
+            cell_index = self.adata_index.loc[self.adata_index["index"] == cell_id].index.values
+            cell_indices.append(cell_index[0])
+
+        return cell_indices
 
     @staticmethod
     def _file_ext(fname):
@@ -208,6 +238,8 @@ class ImageFolderDataset(Dataset):
 
     def _load_raw_image(self, raw_idx):
         fname = self._image_fnames[raw_idx]
+        id_xy = fname.split(".")[0]
+        self.id = id_xy[:-3]
         with self._open_file(fname) as f:
             if pyspng is not None and self._file_ext(fname) == '.png':
                 image = pyspng.load(f.read())
@@ -220,38 +252,47 @@ class ImageFolderDataset(Dataset):
 
     def _load_raw_labels(self):
         # Modify this in order to sample from scVI
-        fname = 'dataset.json'
-        if fname not in self._all_fnames:
-            return None
-        with self._open_file(fname) as f:
-            labels = json.load(f)['labels']
-        if labels is None:
-            return None
-        labels = dict(labels)
-        labels = [labels["00000/" + fname.replace('\\', '/')] for fname in self._image_fnames]
-        labels = np.array(labels)
-        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
-        return labels
+        if self._dataset_name == "cifar10":
+            fname = 'dataset.json'
+            if fname not in self._all_fnames:
+                return None
+            with self._open_file(fname) as f:
+                labels = json.load(f)['labels']
+            if labels is None:
+                return None
+            labels = dict(labels)
+            labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
+            labels = np.array(labels)
+            labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+            return labels
+        elif self._dataset_name == "patchseq_nuclei":
+            all_latent = self.scvi_model.get_latent_representation(self.adata, indices=self.cell_indices, give_mean=True)
+            all_latent = all_latent.squeeze()
+            return all_latent
     
-    # def get_label(self, idx):
-    #     label = self._get_raw_labels()[self._raw_idx[idx]]
-    #     if label.dtype == np.int64:
-    #         onehot = np.zeros(self.label_shape, dtype=np.float32)
-    #         onehot[label] = 1
-    #         label = onehot
-    #     return label.copy()
+    def _get_raw_labels(self):
+        if self._raw_labels is None:
+            self._raw_labels = self._load_raw_labels() if self._use_labels else None
+            if self._raw_labels is None:
+                self._raw_labels = np.zeros([self._raw_shape[0], 0], dtype=np.float32)
+            assert isinstance(self._raw_labels, np.ndarray)
+            assert self._raw_labels.shape[0] == self._raw_shape[0]
+            assert self._raw_labels.dtype in [np.float32, np.int64]
+            if self._raw_labels.dtype == np.int64:
+                assert self._raw_labels.ndim == 1
+                assert np.all(self._raw_labels >= 0)
+        return self._raw_labels
     
-    # def _get_raw_labels(self):
-    #     if self._raw_labels is None:
-    #         self._raw_labels = self._load_raw_labels() if self._use_labels else None
-    #         if self._raw_labels is None:
-    #             self._raw_labels = np.zeros([self._raw_shape[0], 0], dtype=np.float32)
-    #         assert isinstance(self._raw_labels, np.ndarray)
-    #         assert self._raw_labels.shape[0] == self._raw_shape[0]
-    #         assert self._raw_labels.dtype in [np.float32, np.int64]
-    #         if self._raw_labels.dtype == np.int64:
-    #             assert self._raw_labels.ndim == 1
-    #             assert np.all(self._raw_labels >= 0)
-    #     return self._raw_labels
+    def get_label(self, idx):
+        if self._dataset_name == "cifar10":
+            label = self._get_raw_labels()[self._raw_idx[idx]]
+            if label.dtype == np.int64:
+                onehot = np.zeros(self.label_shape, dtype=np.float32)
+                onehot[label] = 1
+                label = onehot
+            return label.copy()
+        elif self._dataset_name == "patchseq_nuclei":
+            label = self._get_raw_labels()[self._raw_idx[idx]]
+            return label.copy()
 
 #----------------------------------------------------------------------------
