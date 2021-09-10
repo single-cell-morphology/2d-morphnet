@@ -17,6 +17,8 @@ import dnnlib
 import numpy as np
 import PIL.Image
 import torch
+import scvi
+import anndata
 
 import legacy
 
@@ -43,6 +45,7 @@ def num_range(s: str) -> List[int]:
 @click.option('--noise-mode', help='Noise mode', type=click.Choice(['const', 'random', 'none']), default='const', show_default=True)
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
+@click.option('--dataset', help='Name of Dataset', required=True, type=str)
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -51,7 +54,8 @@ def generate_images(
     noise_mode: str,
     outdir: str,
     class_idx: Optional[int],
-    projected_w: Optional[str]
+    projected_w: Optional[str],
+    dataset_name: Optional[str]
 ):
     """Generate images using pretrained network pickle.
 
@@ -76,6 +80,11 @@ def generate_images(
     # Render an image from projected W
     python generate.py --outdir=out --projected_w=projected_w.npz \\
         --network=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metfaces.pkl
+
+    \b
+    # Patchseq
+    python generate.py --outdir=out --seeds=0 --class=1 --dataset="patchseq_nuclei" \\
+        --network=./patchseq_512px_run/00013-xy_dpi96_512px-cond-auto1-gamma10-noaug/network-snapshot-004200.pkl
     """
 
     print('Loading networks from "%s"...' % network_pkl)
@@ -103,8 +112,55 @@ def generate_images(
         ctx.fail('--seeds option is required when not using --projected-w')
 
     # Labels.
+    import pdb
+    pdb.set_trace()
+
+    if dataset_name == "patchseq_nuclei":
+        # Load scVI model to use latent gene expression as labels
+        scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/tolias_allen_nuclei"
+        scvi_model = 
+    """
+    def get_cell_indices(self):
+        cell_indices = []
+        for i in self._raw_idx:
+            image_name = self._image_fnames[i].split(".")[0]
+            cell_id = "_".join(image_name.split("_")[:-1])
+            cell_index = self.adata_index.loc[self.adata_index["index"] == cell_id].index.values
+            cell_indices.append(cell_index[0])
+
+        return cell_indices
+
+    elif self._dataset_name == "patchseq_nuclei":
+                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq_combined/processed"
+                scvi_path = "scVI/patchseq"
+                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
+                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
+                self.adata_index = self.adata.obs.reset_index()
+                self.cell_indices = self.get_cell_indices()
+
+    def _load_raw_labels(self):
+        # Modify this in order to sample from scVI
+        if self._dataset_name == "cifar10":
+            fname = 'dataset.json'
+            if fname not in self._all_fnames:
+                return None
+            with self._open_file(fname) as f:
+                labels = json.load(f)['labels']
+            if labels is None:
+                return None
+            labels = dict(labels)
+            labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
+            labels = np.array(labels)
+            labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+            return labels
+        elif self._dataset_name == "patchseq_nuclei":
+            all_latent = self.scvi_model.get_latent_representation(self.adata, indices=self.cell_indices, give_mean=True)
+            all_latent = all_latent.squeeze()
+            return all_latent
+    """
+
     label = torch.zeros([1, G.c_dim], device=device)
-    if G.c_dim != 0:
+    if G.c_dim != 0: # G.c_dim=10
         if class_idx is None:
             ctx.fail('Must specify class label with --class when using a conditional network')
         label[:, class_idx] = 1
