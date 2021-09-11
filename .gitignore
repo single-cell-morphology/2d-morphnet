@@ -5,6 +5,7 @@ slurm/
 patchseq_128px_runs/
 patchseq_512px_runs/
 notebooks/
+out/
 *.sh
 
 
