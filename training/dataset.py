@@ -191,6 +191,13 @@ class ImageFolderDataset(Dataset):
         if super_kwargs["use_labels"]:
             if self._dataset_name == "cifar10":
                 pass
+            elif self._dataset_name == "patchseq":
+                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed"
+                scvi_path = "gene_expression/patchseq_scVI"
+                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
+                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
+                self.adata_index = self.adata.obs.reset_index()
+                self.cell_indices = self.get_cell_indices()
             elif self._dataset_name == "patchseq_nuclei":
                 base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq_combined/processed"
                 scvi_path = "scVI/patchseq"
@@ -202,8 +209,7 @@ class ImageFolderDataset(Dataset):
     def get_cell_indices(self):
         cell_indices = []
         for i in self._raw_idx:
-            image_name = self._image_fnames[i].split(".")[0]
-            cell_id = "_".join(image_name.split("_")[:-1])
+            cell_id = self._image_fnames[i].split(".")[0]
             cell_index = self.adata_index.loc[self.adata_index["index"] == cell_id].index.values
             cell_indices.append(cell_index[0])
 
@@ -265,7 +271,7 @@ class ImageFolderDataset(Dataset):
             labels = np.array(labels)
             labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
             return labels
-        elif self._dataset_name == "patchseq_nuclei":
+        elif self._dataset_name == "patchseq_nuclei" or self._dataset_name =="patchseq":
             all_latent = self.scvi_model.get_latent_representation(self.adata, indices=self.cell_indices, give_mean=True)
             all_latent = all_latent.squeeze()
             return all_latent
@@ -291,7 +297,7 @@ class ImageFolderDataset(Dataset):
                 onehot[label] = 1
                 label = onehot
             return label.copy()
-        elif self._dataset_name == "patchseq_nuclei":
+        elif self._dataset_name == "patchseq_nuclei" or self._dataset_name == "patchseq":
             label = self._get_raw_labels()[self._raw_idx[idx]]
             return label.copy()
 
