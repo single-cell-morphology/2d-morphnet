@@ -2,6 +2,7 @@ __pycache__/
 .cache/
 training-runs/
 slurm/
+patchseq/
 patchseq_128px_runs/
 patchseq_512px_runs/
 notebooks/
