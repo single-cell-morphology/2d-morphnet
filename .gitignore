@@ -5,7 +5,10 @@ slurm/
 patchseq/
 patchseq_128px_runs/
 patchseq_512px_runs/
+patchseq_nuclei/
 notebooks/
+generated/
+interpretation/
 out/
 *.sh
 
