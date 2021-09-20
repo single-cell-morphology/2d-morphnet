@@ -199,8 +199,8 @@ class ImageFolderDataset(Dataset):
                 self.adata_index = self.adata.obs.reset_index()
                 self.cell_indices = self.get_cell_indices()
             elif self._dataset_name == "patchseq_nuclei":
-                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq_combined/processed"
-                scvi_path = "scVI/patchseq"
+                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed"
+                scvi_path = "gene_expression/patchseq_nuclei_scVI"
                 self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
                 self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
                 self.adata_index = self.adata.obs.reset_index()
