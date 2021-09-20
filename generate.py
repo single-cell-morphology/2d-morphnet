@@ -19,6 +19,8 @@ import PIL.Image
 import torch
 import scvi
 import anndata
+import tqdm
+import random
 
 import legacy
 
@@ -46,6 +48,10 @@ def num_range(s: str) -> List[int]:
 @click.option('--projected-w', help='Projection result file', type=str, metavar='FILE')
 @click.option('--outdir', help='Where to save the output images', type=str, required=True, metavar='DIR')
 @click.option('--dataset', help='Name of Dataset', required=True, type=str)
+@click.option('--cell_source', help='Tolias, Allen, or Nuclei', required=True, type=str)
+@click.option('--celltype', help='IT, Sst, Pvalb, Vip, Lamp5, Sncg', required=True, type=str)
+@click.option('--num_imgs', type=int, help='Number of cells to sample per celltype')
+@click.option('--from_train', type=bool, required=True)
 def generate_images(
     ctx: click.Context,
     network_pkl: str,
@@ -55,7 +61,11 @@ def generate_images(
     outdir: str,
     class_idx: Optional[int],
     projected_w: Optional[str],
-    dataset_name: Optional[str]
+    dataset: Optional[str],
+    cell_source: str,
+    celltype: str,
+    num_imgs: int,
+    from_train: bool
 ):
     """Generate images using pretrained network pickle.
 
@@ -83,8 +93,12 @@ def generate_images(
 
     \b
     # Patchseq
-    python generate.py --outdir=out --seeds=0 --class=1 --dataset="patchseq_nuclei" \\
-        --network=./patchseq_512px_run/00013-xy_dpi96_512px-cond-auto1-gamma10-noaug/network-snapshot-004200.pkl
+    python generate.py --outdir=generated/patchseq_cond --seeds=0 --class=1 --dataset="patchseq" --cell_source="tolias" --celltype="Pvalb" --num_imgs=10 --from_train=False --network=./patchseq/00019-step3_filtered-cond-auto1-noaug/network-snapshot-000800.pkl
+    
+    \b
+    # Patchseq_Nuclei
+    python generate.py --outdir=generated/patchseq_nuclei_cond --seeds=0 --class=1 --dataset="patchseq_nuclei" --cell_source="patchseq" --celltype="Pvalb" --num_imgs=10 --from_train=False --network=./patchseq_nuclei/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl
+
     """
 
     print('Loading networks from "%s"...' % network_pkl)
@@ -111,71 +125,49 @@ def generate_images(
     if seeds is None:
         ctx.fail('--seeds option is required when not using --projected-w')
 
+    random.seed(seeds[0])
     # Labels.
-    import pdb
-    pdb.set_trace()
-
-    if dataset_name == "patchseq_nuclei":
-        # Load scVI model to use latent gene expression as labels
-        scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/tolias_allen_nuclei"
-        scvi_model = 
-    """
-    def get_cell_indices(self):
-        cell_indices = []
-        for i in self._raw_idx:
-            image_name = self._image_fnames[i].split(".")[0]
-            cell_id = "_".join(image_name.split("_")[:-1])
-            cell_index = self.adata_index.loc[self.adata_index["index"] == cell_id].index.values
-            cell_indices.append(cell_index[0])
-
-        return cell_indices
-
-    elif self._dataset_name == "patchseq_nuclei":
-                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq_combined/processed"
-                scvi_path = "scVI/patchseq"
-                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
-                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
-                self.adata_index = self.adata.obs.reset_index()
-                self.cell_indices = self.get_cell_indices()
-
-    def _load_raw_labels(self):
-        # Modify this in order to sample from scVI
-        if self._dataset_name == "cifar10":
-            fname = 'dataset.json'
-            if fname not in self._all_fnames:
-                return None
-            with self._open_file(fname) as f:
-                labels = json.load(f)['labels']
-            if labels is None:
-                return None
-            labels = dict(labels)
-            labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
-            labels = np.array(labels)
-            labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
-            return labels
-        elif self._dataset_name == "patchseq_nuclei":
-            all_latent = self.scvi_model.get_latent_representation(self.adata, indices=self.cell_indices, give_mean=True)
-            all_latent = all_latent.squeeze()
-            return all_latent
-    """
-
     label = torch.zeros([1, G.c_dim], device=device)
-    if G.c_dim != 0: # G.c_dim=10
-        if class_idx is None:
-            ctx.fail('Must specify class label with --class when using a conditional network')
-        label[:, class_idx] = 1
+    if G.c_dim != 0: # model is conditional
+        if dataset == "patchseq":
+            scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/patchseq_scVI"
+        elif dataset == "patchseq_nuclei":
+            scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/patchseq_nuclei_scVI"
+        
+        scvi_model = scvi.model.SCVI.load(scvi_path)
+        adata = anndata.read_h5ad(os.path.join(scvi_path, "adata.h5ad"))
+        adata.obs = adata.obs.reset_index()
+
+        # Determine which images to produce for conditional generation
+        cell_indices = select_cells(adata, cell_source, celltype, num_imgs, from_train)
+        label = scvi_model.get_latent_representation(adata, indices=cell_indices, give_mean=True) # (107411, 10)
+        label = torch.from_numpy(label).to(device)
     else:
         if class_idx is not None:
             print ('warn: --class=lbl ignored when running on an unconditional network')
 
     # Generate images.
     for seed_idx, seed in enumerate(seeds):
-        print('Generating image for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
+        print('Generating images for seed %d (%d/%d) ...' % (seed, seed_idx, len(seeds)))
         z = torch.from_numpy(np.random.RandomState(seed).randn(1, G.z_dim)).to(device)
-        img = G(z, label, truncation_psi=truncation_psi, noise_mode=noise_mode)
-        img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}.png')
 
+        for i, cell_index in enumerate(cell_indices):
+            cell_id = adata.obs.at[cell_index, "index"]
+            img = G(z, torch.unsqueeze(label[i], 0), truncation_psi=truncation_psi, noise_mode=noise_mode)
+            img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+            PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{cell_source}_{celltype.split(" ")[1]}_{cell_id}_train{int(from_train)}_seed{seed:04d}.png')
+
+def select_cells(adata, cell_source, celltype, num_imgs, from_train):
+    obs = adata.obs
+    obs["cell_source"] = obs["cell_source"].astype(str)
+    obs["celltype"] = obs["celltype"].astype(str)
+    if cell_source == "patchseq":
+        subset_df = obs.loc[((obs["cell_source"] == "tolias") | (obs["cell_source"] == "allen")) & (obs["celltype"] == celltype) & (obs["use_train"]==int(from_train))]
+    else:
+        subset_df = obs.loc[(obs["cell_source"] == cell_source) & (obs["celltype"] == celltype) & (obs["use_train"]==int(from_train))]
+    cell_indices = random.choices(list(subset_df.index), k=num_imgs)
+
+    return cell_indices
 
 #----------------------------------------------------------------------------
 
