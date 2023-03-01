@@ -3,6 +3,7 @@ slurm/
 patchseq/
 patchseq_128px_runs/
 patchseq_512px_runs/
+merscope_polyT/
 patchseq_nuclei/
 notebooks/
 generated/
