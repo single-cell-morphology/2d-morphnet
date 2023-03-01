@@ -25,23 +25,21 @@ except ImportError:
 #----------------------------------------------------------------------------
 class Dataset(torch.utils.data.Dataset):
     def __init__(self,
-        name,                   # Name of the dataset.
-        dataset_name,
+        dataset_name,                   # Name of the dataset.
         raw_shape,              # Shape of the raw image data (NCHW).
         max_size    = None,     # Artificially limit the size of the dataset. None = no limit. Applied before xflip.
         use_labels  = False,    # Enable conditioning labels? False = label dimension is zero.
         xflip       = False,    # Artificially double the size of the dataset via x-flips. Applied after max_size.
         random_seed = 0,        # Random seed to use when applying max_size.
     ):
-        self._name = name
-        self._raw_shape = list(raw_shape)
-        self._use_labels = use_labels
-        self._raw_labels = None
-        self._label_shape = None
-        self._dataset_name = dataset_name
+        self.name = dataset_name
+        self.raw_shape = list(raw_shape)
+        self.use_labels = use_labels
+        self.raw_labels = None
+        self.label_shape = None
 
         # Apply max_size.
-        self._raw_idx = np.arange(self._raw_shape[0], dtype=np.int64)
+        self._raw_idx = np.arange(self.raw_shape[0], dtype=np.int64)
         if (max_size is not None) and (self._raw_idx.size > max_size):
             np.random.RandomState(random_seed).shuffle(self._raw_idx)
             self._raw_idx = np.sort(self._raw_idx[:max_size])
@@ -53,17 +51,17 @@ class Dataset(torch.utils.data.Dataset):
             self._xflip = np.concatenate([self._xflip, np.ones_like(self._xflip)])
 
     def _get_raw_labels(self):
-        if self._raw_labels is None:
-            self._raw_labels = self._load_raw_labels() if self._use_labels else None
-            if self._raw_labels is None:
-                self._raw_labels = np.zeros([self._raw_shape[0], 0], dtype=np.float32)
-            assert isinstance(self._raw_labels, np.ndarray)
-            assert self._raw_labels.shape[0] == self._raw_shape[0]
-            assert self._raw_labels.dtype in [np.float32, np.int64]
-            if self._raw_labels.dtype == np.int64:
-                assert self._raw_labels.ndim == 1
-                assert np.all(self._raw_labels >= 0)
-        return self._raw_labels
+        if self.raw_labels is None:
+            self.raw_labels = self._load_raw_labels() if self.use_labels else None
+            if self.raw_labels is None:
+                self.raw_labels = np.zeros([self.raw_shape[0], 0], dtype=np.float32)
+            assert isinstance(self.raw_labels, np.ndarray)
+            assert self.raw_labels.shape[0] == self.raw_shape[0]
+            assert self.raw_labels.dtype in [np.float32, np.int64]
+            if self.raw_labels.dtype == np.int64:
+                assert self.raw_labels.ndim == 1
+                assert np.all(self.raw_labels >= 0)
+        return self.raw_labels
 
     def close(self): # to be overridden by subclass
         pass
@@ -111,11 +109,11 @@ class Dataset(torch.utils.data.Dataset):
 
     @property
     def name(self):
-        return self._name
+        return self.name
 
     @property
     def image_shape(self):
-        return list(self._raw_shape[1:])
+        return list(self.raw_shape[1:])
 
     @property
     def num_channels(self):
@@ -130,17 +128,17 @@ class Dataset(torch.utils.data.Dataset):
 
     @property
     def label_shape(self):
-        if self._dataset_name == "merscope" and self._use_labels:
+        if self._dataset_name == "merscope" and self.use_labels:
             return [10]
-        if self._dataset_name == "patchseq_nuclei" and self._use_labels:
+        if self._dataset_name == "patchseq_nuclei" and self.use_labels:
             return [10]
-        if self._label_shape is None:
+        if self.label_shape is None:
             raw_labels = self._get_raw_labels()
             if raw_labels.dtype == np.int64:
-                self._label_shape = [int(np.max(raw_labels)) + 1]
+                self.label_shape = [int(np.max(raw_labels)) + 1]
             else:
-                self._label_shape = raw_labels.shape[1:]
-        return list(self._label_shape)
+                self.label_shape = raw_labels.shape[1:]
+        return list(self.label_shape)
 
     @property
     def label_dim(self):
@@ -194,34 +192,19 @@ class ImageFolderDataset(Dataset):
             self.scvi_model = scvi.model.SCVI.load(self.scvi_path)
             self.adata = anndata.read_h5ad(os.path.join(self.scvi_path, "adata.h5ad"))
             self.adata_index = self.adata.obs.reset_index()
-            self.cell_indices = self.get_cell_indices()
+            self.cell_indices = self._get_cell_indices()
 
-        super().__init__(name=name, raw_shape=raw_shape, dataset_name=dataset_name, **super_kwargs)
+        super().__init__(dataset_name=name, raw_shape=raw_shape, dataset_name=dataset_name, **super_kwargs)
 
-    def get_cell_indices(self):
+    def _get_cell_indices(self):
         cell_indices = []
         cell_ids = [self._image_fnames[i].split(".")[0] for i in self._raw_idx]
-        if self.dataset_name in ["patchseq", "patchseq_nuclei"]:
-            self.adata_index["index"] = self.adata_index["index"].astype("category")
-            self.adata_index["index"].cat.set_categories(cell_ids, inplace=True)
-            cell_indices = self.adata_index.sort_values(by=["index"]).index.values
 
-        if self.dataset_name == "merscope":
-            cell_indices = self._extracted_from_get_cell_indices_10(cell_ids)
+        self.adata_index["index"] = self.adata_index["index"].astype("category")
+        self.adata_index["index"].cat.set_categories(cell_ids, inplace=True)
+        cell_indices = self.adata_index.sort_values(by=["index"]).index.values
+
         return cell_indices
-
-    # TODO Rename this here and in `get_cell_indices`
-    def _extracted_from_get_cell_indices_10(self, cell_ids):
-        adata = anndata.read_h5ad(os.path.join(self.base_path, self.scvi_path, "adata.h5ad"))
-        adata_index = adata.obs.reset_index()
-        adata_index = adata_index.loc[adata_index["cell_id"].isin(cell_ids)]
-        adata_index["cell_id"] = adata_index["cell_id"].astype("category")
-        adata_index["cell_id"].cat.set_categories(cell_ids, inplace=True)
-        result = adata_index.sort_values(by=["cell_id"]).index.values
-
-        del adata, adata_index
-
-        return result
 
     @staticmethod
     def _file_ext(fname):
@@ -265,56 +248,7 @@ class ImageFolderDataset(Dataset):
         return image
 
     def _load_raw_labels(self):
-        # Modify this in order to sample from scVI
-        if self.dataset_name == "cifar10":
-            return self._extracted_from__load_raw_labels_4()
-        elif self.dataset_name in ["patchseq_nuclei", "patchseq", "merscope"]:
-            scvi_model = scvi.model.SCVI.load(os.path.join(self.base_path, self.scvi_path))
-            adata = anndata.read_h5ad(os.path.join(self.base_path, self.scvi_path, "adata.h5ad"))
-            all_latent = scvi_model.get_latent_representation(adata, indices=self.cell_indices, give_mean=True)
-            all_latent = all_latent.squeeze()
+        all_latent = self.scvi_model.get_latent_representation(adata, indices=self.cell_indices, give_mean=True)
+        all_latent = all_latent.squeeze()
 
-            del scvi_model, adata
-            return all_latent
-
-    # TODO Rename this here and in `_load_raw_labels`
-    def _extracted_from__load_raw_labels_4(self):
-        fname = 'dataset.json'
-        if fname not in self._all_fnames:
-            return None
-        with self._open_file(fname) as f:
-            labels = json.load(f)['labels']
-        if labels is None:
-            return None
-        labels = dict(labels)
-        labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
-        labels = np.array(labels)
-        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
-        return labels
-
-    def _get_raw_labels(self):
-        if self._raw_labels is None:
-            self._raw_labels = self._load_raw_labels() if self._use_labels else None
-            if self._raw_labels is None:
-                self._raw_labels = np.zeros([self._raw_shape[0], 0], dtype=np.float32)
-            assert isinstance(self._raw_labels, np.ndarray)
-            assert self._raw_labels.shape[0] == self._raw_shape[0]
-            assert self._raw_labels.dtype in [np.float32, np.int64]
-            if self._raw_labels.dtype == np.int64:
-                assert self._raw_labels.ndim == 1
-                assert np.all(self._raw_labels >= 0)
-        return self._raw_labels
-
-    def get_label(self, idx):
-        if self.dataset_name == "cifar10":
-            label = self._get_raw_labels()[self._raw_idx[idx]]
-            if label.dtype == np.int64:
-                onehot = np.zeros(self.label_shape, dtype=np.float32)
-                onehot[label] = 1
-                label = onehot
-            return label.copy()
-        elif self.dataset_name in ["patchseq_nuclei", "patchseq", "merscope"]:
-            label = self._get_raw_labels()[self._raw_idx[idx]]
-            return label.copy()
-
-#----------------------------------------------------------------------------
+        return all_latent
