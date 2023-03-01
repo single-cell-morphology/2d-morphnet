@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+import contextlib
 import os
 import numpy as np
 import zipfile
@@ -77,10 +78,8 @@ class Dataset(torch.utils.data.Dataset):
         return dict(self.__dict__, _raw_labels=None)
 
     def __del__(self):
-        try:
+        with contextlib.suppress(Exception):
             self.close()
-        except:
-            pass
 
     def __len__(self):
         return self._raw_idx.size
@@ -131,6 +130,8 @@ class Dataset(torch.utils.data.Dataset):
 
     @property
     def label_shape(self):
+        if self._dataset_name == "merscope" and self._use_labels:
+            return [10]
         if self._dataset_name == "patchseq_nuclei" and self._use_labels:
             return [10]
         if self._label_shape is None:
@@ -159,18 +160,20 @@ class Dataset(torch.utils.data.Dataset):
 class ImageFolderDataset(Dataset):
     def __init__(self,
         dataset_name,           # Name of Dataset, e.g. cifar
-        path,                   # Path to directory or zip.
+        img_path,                   # Path to directory or zip.
+        scvi_path = None, # Path to scvi model if conditioning on gene expression
         resolution      = None, # Ensure specific resolution, None = highest available.
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
-        self._dataset_name = dataset_name
-        self._path = path
+        self.dataset_name = dataset_name
+        self.img_path = img_path
+        self.scvi_path = scvi_path
         self._zipfile = None
 
-        if os.path.isdir(self._path):
+        if os.path.isdir(self.img_path):
             self._type = 'dir'
-            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
-        elif self._file_ext(self._path) == '.zip':
+            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self.img_path) for root, _dirs, files in os.walk(self.img_path) for fname in files}
+        elif self._file_ext(self.img_path) == '.zip':
             self._type = 'zip'
             self._all_fnames = set(self._get_zipfile().namelist())
         else:
@@ -181,39 +184,44 @@ class ImageFolderDataset(Dataset):
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
 
-        name = os.path.splitext(os.path.basename(self._path))[0]
+        name = os.path.splitext(os.path.basename(self.img_path))[0]
         raw_shape = [len(self._image_fnames)] + list(self._load_raw_image(0).shape)
         if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
             raise IOError('Image files do not match the specified resolution')
+
+        # Load scvi model for conditional information
+        if self.scvi_path is not None:
+            self.scvi_model = scvi.model.SCVI.load(self.scvi_path)
+            self.adata = anndata.read_h5ad(os.path.join(self.scvi_path, "adata.h5ad"))
+            self.adata_index = self.adata.obs.reset_index()
+            self.cell_indices = self.get_cell_indices()
+
         super().__init__(name=name, raw_shape=raw_shape, dataset_name=dataset_name, **super_kwargs)
 
-        # Load scVI model if using conditional information
-        if super_kwargs["use_labels"]:
-            if self._dataset_name == "cifar10":
-                pass
-            elif self._dataset_name == "patchseq":
-                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed"
-                scvi_path = "gene_expression/patchseq_scVI"
-                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
-                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
-                self.adata_index = self.adata.obs.reset_index()
-                self.cell_indices = self.get_cell_indices()
-            elif self._dataset_name == "patchseq_nuclei":
-                base_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed"
-                scvi_path = "gene_expression/patchseq_nuclei_scVI"
-                self.scvi_model = scvi.model.SCVI.load(os.path.join(base_path, scvi_path))
-                self.adata = anndata.read_h5ad(os.path.join(base_path, scvi_path, "adata.h5ad"))
-                self.adata_index = self.adata.obs.reset_index()
-                self.cell_indices = self.get_cell_indices()
-    
     def get_cell_indices(self):
         cell_indices = []
-        for i in self._raw_idx:
-            cell_id = self._image_fnames[i].split(".")[0]
-            cell_index = self.adata_index.loc[self.adata_index["index"] == cell_id].index.values
-            cell_indices.append(cell_index[0])
+        cell_ids = [self._image_fnames[i].split(".")[0] for i in self._raw_idx]
+        if self.dataset_name in ["patchseq", "patchseq_nuclei"]:
+            self.adata_index["index"] = self.adata_index["index"].astype("category")
+            self.adata_index["index"].cat.set_categories(cell_ids, inplace=True)
+            cell_indices = self.adata_index.sort_values(by=["index"]).index.values
 
+        if self.dataset_name == "merscope":
+            cell_indices = self._extracted_from_get_cell_indices_10(cell_ids)
         return cell_indices
+
+    # TODO Rename this here and in `get_cell_indices`
+    def _extracted_from_get_cell_indices_10(self, cell_ids):
+        adata = anndata.read_h5ad(os.path.join(self.base_path, self.scvi_path, "adata.h5ad"))
+        adata_index = adata.obs.reset_index()
+        adata_index = adata_index.loc[adata_index["cell_id"].isin(cell_ids)]
+        adata_index["cell_id"] = adata_index["cell_id"].astype("category")
+        adata_index["cell_id"].cat.set_categories(cell_ids, inplace=True)
+        result = adata_index.sort_values(by=["cell_id"]).index.values
+
+        del adata, adata_index
+
+        return result
 
     @staticmethod
     def _file_ext(fname):
@@ -222,15 +230,13 @@ class ImageFolderDataset(Dataset):
     def _get_zipfile(self):
         assert self._type == 'zip'
         if self._zipfile is None:
-            self._zipfile = zipfile.ZipFile(self._path)
+            self._zipfile = zipfile.ZipFile(self.img_path)
         return self._zipfile
 
     def _open_file(self, fname):
         if self._type == 'dir':
-            return open(os.path.join(self._path, fname), 'rb')
-        if self._type == 'zip':
-            return self._get_zipfile().open(fname, 'r')
-        return None
+            return open(os.path.join(self.img_path, fname), 'rb')
+        return self._get_zipfile().open(fname, 'r') if self._type == 'zip' else None
 
     def close(self):
         try:
@@ -254,28 +260,38 @@ class ImageFolderDataset(Dataset):
         if image.ndim == 2:
             image = image[:, :, np.newaxis] # HW => HWC
         image = image.transpose(2, 0, 1) # HWC => CHW
+        if self.dataset_name == "merscope":
+            image = np.uint8(image * 255)
         return image
 
     def _load_raw_labels(self):
         # Modify this in order to sample from scVI
-        if self._dataset_name == "cifar10":
-            fname = 'dataset.json'
-            if fname not in self._all_fnames:
-                return None
-            with self._open_file(fname) as f:
-                labels = json.load(f)['labels']
-            if labels is None:
-                return None
-            labels = dict(labels)
-            labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
-            labels = np.array(labels)
-            labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
-            return labels
-        elif self._dataset_name == "patchseq_nuclei" or self._dataset_name =="patchseq":
-            all_latent = self.scvi_model.get_latent_representation(self.adata, indices=self.cell_indices, give_mean=True)
+        if self.dataset_name == "cifar10":
+            return self._extracted_from__load_raw_labels_4()
+        elif self.dataset_name in ["patchseq_nuclei", "patchseq", "merscope"]:
+            scvi_model = scvi.model.SCVI.load(os.path.join(self.base_path, self.scvi_path))
+            adata = anndata.read_h5ad(os.path.join(self.base_path, self.scvi_path, "adata.h5ad"))
+            all_latent = scvi_model.get_latent_representation(adata, indices=self.cell_indices, give_mean=True)
             all_latent = all_latent.squeeze()
+
+            del scvi_model, adata
             return all_latent
-    
+
+    # TODO Rename this here and in `_load_raw_labels`
+    def _extracted_from__load_raw_labels_4(self):
+        fname = 'dataset.json'
+        if fname not in self._all_fnames:
+            return None
+        with self._open_file(fname) as f:
+            labels = json.load(f)['labels']
+        if labels is None:
+            return None
+        labels = dict(labels)
+        labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
+        labels = np.array(labels)
+        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+        return labels
+
     def _get_raw_labels(self):
         if self._raw_labels is None:
             self._raw_labels = self._load_raw_labels() if self._use_labels else None
@@ -288,16 +304,16 @@ class ImageFolderDataset(Dataset):
                 assert self._raw_labels.ndim == 1
                 assert np.all(self._raw_labels >= 0)
         return self._raw_labels
-    
+
     def get_label(self, idx):
-        if self._dataset_name == "cifar10":
+        if self.dataset_name == "cifar10":
             label = self._get_raw_labels()[self._raw_idx[idx]]
             if label.dtype == np.int64:
                 onehot = np.zeros(self.label_shape, dtype=np.float32)
                 onehot[label] = 1
                 label = onehot
             return label.copy()
-        elif self._dataset_name == "patchseq_nuclei" or self._dataset_name == "patchseq":
+        elif self.dataset_name in ["patchseq_nuclei", "patchseq", "merscope"]:
             label = self._get_raw_labels()[self._raw_idx[idx]]
             return label.copy()
 
