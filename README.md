@@ -1,5 +1,12 @@
-# MorphGAN
+# MorphNet Predicts Cell Morphology from Single-Cell Gene Expression
 
+![MorphNet](docs/morphnet_fig1.png)
+
+[Paper](https://www.biorxiv.org/content/10.1101/2022.10.21.513201v1) | [Code](https://github.com/single-cell-morphology) | [Demo](https://morphnet2d.streamlit.app/)
+
+This repository contains the training code for the paper [MorphNet: Predicting Cell Morphology from Single-Cell Gene Expression](https://www.biorxiv.org/content/10.1101/2022.10.21.513201v1). For demo, please check out our [Streamlit app](https://morphnet2d.streamlit.app/).
+
+<!--
 How to pull from `stylegan2-ada-pytorch` repo:
 
 ```
@@ -22,3 +29,4 @@ AttributeError: module 'torch.distributions.constraints' has no attribute '_Corr
 ```
 Solution: `pip install pyro-ppl==1.5.2`
 From [here](https://www.gitmemory.com/issue/YosefLab/scvi-tools/985/791824847)
+-->
