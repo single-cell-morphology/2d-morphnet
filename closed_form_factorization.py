@@ -3,7 +3,15 @@ import torch
 import dnnlib
 import legacy
 import pickle
+import os
 
+"""
+Unconditonal patchseq
+python closed_form_factorization.py --out=patchseq_uncond.pt --ckpt=./patchseq/00021-step3_filtered-auto1-noaug/network-snapshot-000600.pkl
+
+Conditional Patchseq-nuclei
+python closed_form_factorization.py --out=patchseq_nuclei.pt --ckpt=./patchseq_nuclei/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl
+"""
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Extract factor/eigenvectors of latent spaces using closed form factorization"
@@ -22,8 +30,7 @@ if __name__ == "__main__":
     
     print('Loading networks from "%s"...' % args.ckpt)
     device = torch.device('cuda')
-    import pdb
-    pdb.set_trace()
+
     with dnnlib.util.open_url(args.ckpt) as f:
         G = legacy.load_network_pkl(f)['G_ema'].to(device) # type: ignore
 
@@ -45,4 +52,4 @@ if __name__ == "__main__":
     W = torch.cat(weight_mat, 0)
     eigvec = torch.svd(W).V.to("cpu")
 
-    torch.save({"ckpt": args.ckpt, "eigvec": eigvec}, args.out)
+    torch.save({"ckpt": args.ckpt, "eigvec": eigvec}, os.path.join(f"./interpretation/factors/{args.out}"))

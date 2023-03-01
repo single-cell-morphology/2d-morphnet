@@ -94,11 +94,10 @@ def generate_images(
     \b
     # Patchseq
     python generate.py --outdir=generated/patchseq_cond --seeds=0 --class=1 --dataset="patchseq" --cell_source="tolias" --celltype="Pvalb" --num_imgs=10 --from_train=False --network=./patchseq/00019-step3_filtered-cond-auto1-noaug/network-snapshot-000800.pkl
-    
+
     \b
     # Patchseq_Nuclei
     python generate.py --outdir=generated/patchseq_nuclei_cond --seeds=0 --class=1 --dataset="patchseq_nuclei" --cell_source="patchseq" --celltype="Pvalb" --num_imgs=10 --from_train=False --network=./patchseq_nuclei/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl
-
     """
 
     print('Loading networks from "%s"...' % network_pkl)
@@ -133,7 +132,9 @@ def generate_images(
             scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/patchseq_scVI"
         elif dataset == "patchseq_nuclei":
             scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/patchseq/data/processed/gene_expression/patchseq_nuclei_scVI"
-        
+        elif dataset == "merscope":
+            scvi_path = "/nfs/turbo/umms-welchjd/hojaelee/datasets/merscope/processed/scVI/merscope-baseline"
+
         scvi_model = scvi.model.SCVI.load(scvi_path)
         adata = anndata.read_h5ad(os.path.join(scvi_path, "adata.h5ad"))
         adata.obs = adata.obs.reset_index()
@@ -157,15 +158,21 @@ def generate_images(
             img = (img.permute(0, 2, 3, 1) * 127.5 + 128).clamp(0, 255).to(torch.uint8)
             PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/{cell_source}_{celltype.split(" ")[1]}_{cell_id}_train{int(from_train)}_seed{seed:04d}.png')
 
-def select_cells(adata, cell_source, celltype, num_imgs, from_train):
+def select_cells(adata, cell_source, celltype, num_imgs, from_train=False):
     obs = adata.obs
-    obs["cell_source"] = obs["cell_source"].astype(str)
-    obs["celltype"] = obs["celltype"].astype(str)
     if cell_source == "patchseq":
+        obs["cell_source"] = obs["cell_source"].astype(str)
+        obs["celltype"] = obs["celltype"].astype(str)
         subset_df = obs.loc[((obs["cell_source"] == "tolias") | (obs["cell_source"] == "allen")) & (obs["celltype"] == celltype) & (obs["use_train"]==int(from_train))]
+    elif cell_source == "merscope":
+        subset_df = obs.loc[obs["neuron_or_not"] == int(celltype)]
     else:
         subset_df = obs.loc[(obs["cell_source"] == cell_source) & (obs["celltype"] == celltype) & (obs["use_train"]==int(from_train))]
-    cell_indices = random.choices(list(subset_df.index), k=num_imgs)
+
+    if num_imgs == -1:
+        cell_indices = list(subset_df.index)
+    else:
+        cell_indices = random.choices(list(subset_df.index), k=num_imgs)
 
     return cell_indices
 

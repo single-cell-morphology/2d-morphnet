@@ -8,6 +8,26 @@ import anndata
 import legacy
 import tqdm
 
+def _stylegan_PCA(label):
+    # Load Network
+    network_pkl = "/nfs/turbo/umms-welchjd/hojaelee/stylegan2-ada-pytorch/patchseq_nuclei/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl"
+    print('Loading networks from "%s"...' % network_pkl)
+    device = torch.device('cuda')
+    with dnnlib.util.open_url(network_pkl) as f:
+        G = legacy.load_network_pkl(f)["G_ema"].to(device) # type: ignore
+
+    # Load PCA factors
+    eigvec = torch.load("interpretation/factors/patchseq_nuclei.pt")["eigvec"].to(device)
+    current_eigvec = eigvec[:, 0].unsqueeze(0) # (1, 512)
+    direction = 100 * current_eigvec
+    z = torch.from_numpy(np.random.randn(label.shape[0], G.z_dim)).to(device)
+    import pdb
+    pdb.set_trace()
+    w = G.mapping(z, label, truncation_psi=1, truncation_cutoff=8) # [batch_size, 16, 512]
+    w_pos = G.mapping(z+direction, label, truncation_psi=1, truncation_cutoff=8)
+
+    return w
+
 def _stylegan(label):
     network_pkl = "/nfs/turbo/umms-welchjd/hojaelee/stylegan2-ada-pytorch/patchseq_nuclei/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl"
     print('Loading networks from "%s"...' % network_pkl)
@@ -58,18 +78,22 @@ def interpret_scvi(device, cell_source, model, adata, indices):
             sub_index = indices[(batch_size * i):(batch_size * (i+1))]
 
         tensors["X"].requires_grad = True
-        z = _scvi(tensors["X"])
+        label = _scvi(tensors["X"])
         # jacobian_latent = torch.autograd.functional.jacobian(_scvi, tensors["X"]) # (1, 10, 1, 2133)
         scvi_jacobian = batch_jacobian(_scvi, tensors["X"])
+        # (8, 10, 2133)
 
         save_path = f"./interpretation/{cell_source}_scvi_jacobian_batch{i}.npy"
         np.save(save_path, scvi_jacobian.detach().cpu().numpy())
 
         # stylegan
-        stylegan_jacobian = torch.autograd.functional.jacobian(_stylegan, z)
+        stylegan_jacobian = batch_jacobian(_stylegan_PCA, label)
+        # (16, 512, 8, 10)
         save_path = f"./interpretation/{cell_source}_stylegan2_jacobian_batch{i}.npy"
         np.save(save_path, stylegan_jacobian.detach().cpu().numpy())
 
+        import pdb
+        pdb.set_trace()
         # cell indices
         sub_index_np = np.array(sub_index)
         save_path = f"./interpretation/{cell_source}_index_batch{i}.npy"
@@ -91,7 +115,8 @@ def batch_jacobian(func, x, create_graph=False):
     # x in shape (Batch, Length)
     def _func_sum(x):
         return func(x).sum(dim=0)
-    return torch.autograd.functional.jacobian(_func_sum, x, create_graph=create_graph).permute(1,0,2)
+    # return torch.autograd.functional.jacobian(_func_sum, x, create_graph=create_graph).permute(1,0,2)
+    return torch.autograd.functional.jacobian(_func_sum, x, create_graph=create_graph)
 
 def main(dataset, cell_source):
     device = torch.device('cuda')

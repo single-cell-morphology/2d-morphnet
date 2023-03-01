@@ -25,6 +25,9 @@ Apply different truncation values by using --truncation.
 Apply different increment degree for interpolation video by using --vid_increment.
 Apply different scalar factors for moving latent vectors along eigenvector by using --degree.
 Change output directory by using --output.
+
+python apply_factor.py -i 0-9 --seeds 1009 --ckpt ./patchseq_nuclei
+/00005-step3_filtered-cond-auto1-noaug/network-snapshot-000400.pkl interpretation/factors/patchseq_nuclei.pt --no-video --degree 5 --output=./interpretation/patchseq_nuclei
 """
 
 #############################################################################################
@@ -174,8 +177,9 @@ if __name__ == "__main__":
         print(f"Generate images for seed ", l)
 
         z = torch.from_numpy(np.random.RandomState(l).randn(1, G.z_dim)).to(device)
-        label = scvi_model.get_latent_representation(adata, indices=[l], give_mean=True) 
-        label = torch.from_numpy(label).to(device)
+        if G.c_dim != 0:
+            label = scvi_model.get_latent_representation(adata, indices=[l], give_mean=True) 
+            label = torch.from_numpy(label).to(device)
 
         file_name = ""
         image_grid_eigvec = []
@@ -249,7 +253,7 @@ if __name__ == "__main__":
                         img,
                         f"{index_folder_path}/{fcount:04}.png",
                         normalize=True,
-                        value_range=(-1, 1), # change range to value_range for latest torchvision
+                        range=(-1, 1), # change range to value_range for latest torchvision
                         nrow=1,
                     )
                     fcount+=1
