@@ -1,5 +1,4 @@
 training-runs/
-slurm/
 patchseq/
 patchseq_128px_runs/
 patchseq_512px_runs/
@@ -10,6 +9,9 @@ generated/
 interpretation/
 out/
 *.sh
+
+logs/
+.sourcery.yaml
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,visualstudiocode
