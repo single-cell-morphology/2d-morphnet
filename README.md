@@ -1,4 +1,4 @@
-# MorphGAN 
+# MorphGAN
 
 How to pull from `stylegan2-ada-pytorch` repo:
 
